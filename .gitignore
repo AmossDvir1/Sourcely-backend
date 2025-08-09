@@ -1,0 +1,114 @@
+# =============================================================================
+# Secrets & Environment Files
+# NEVER commit secrets, API keys, or environment-specific configuration.
+# =============================================================================
+/.env
+/.env.*
+# Keep a template file in git to show other developers what variables are needed.
+!/.env.example
+
+
+# =============================================================================
+# Python Dependencies, Caches, and Build Artifacts
+# =============================================================================
+# Virtual Environment - The most important one for Python!
+# The leading slash ensures it only matches at the project root.
+/.venv/
+/venv/
+/env/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Distribution / packaging
+/build/
+/dist/
+/sdist/
+*.egg-info/
+*.egg
+
+# Testing & Coverage
+/.pytest_cache/
+/.tox/
+.coverage
+.coverage.*
+/htmlcov/
+
+
+# =============================================================================
+# Node.js / Frontend Dependencies & Build Artifacts (for React/Vite)
+# =============================================================================
+# Node modules - This can be huge and should never be in git.
+/node_modules/
+
+# Frontend build output directory
+# This might be inside a frontend sub-folder, but this rule is safe.
+/dist/
+
+# Vite specific cache
+/.vite/
+
+# Lockfiles - Sometimes teams don't commit these, but it's generally
+# recommended to commit package-lock.json to ensure consistent installs.
+# Uncomment if your team policy is to ignore them.
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# Log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+
+# =============================================================================
+# IDE and Editor Directories
+# This section is crucial for team collaboration.
+# =============================================================================
+# PyCharm IDE
+# Ignore the entire .idea directory by default...
+/.idea/
+
+# ...BUT, allow the files that store SHARED project settings.
+# This ensures new developers get the run configurations automatically!
+!/.idea/runConfigurations/
+!/.idea/misc.xml
+
+# ...and then re-ignore the files that are specific to YOUR machine.
+/.idea/workspace.xml
+/.idea/shelf/
+
+# VS Code
+/.vscode/*
+# Allow shared settings and launch configurations
+!/.vscode/settings.json
+!/.vscode/launch.json
+!/.vscode/extensions.json
+
+
+# =============================================================================
+# Operating System Files
+# =============================================================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+
+# =============================================================================
+# Logs and Temporary Files
+# =============================================================================
+*.log
+*.log*
+*.swp
+*.swo
+*.tmp
