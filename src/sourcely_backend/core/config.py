@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # Google Gemini API Settings
     GEMINI_API_KEY: str
 
+
+    GITHUB_ACCESS_TOKEN: str
+
     # This tells Pydantic to load the variables from a file named ".env"
     model_config = SettingsConfigDict(
         env_file=".env",

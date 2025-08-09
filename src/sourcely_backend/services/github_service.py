@@ -2,6 +2,7 @@ import base64
 import httpx
 import re
 from typing import Set, Dict, Tuple, Optional
+from ..core.config import settings
 
 # --- Constants for Filtering ---
 
@@ -106,7 +107,14 @@ async def get_repo_contents_from_url(github_url: str) -> Dict[str, str]:
     owner, repo = owner_repo
     repo_files_with_content: Dict[str, str] = {}
 
-    async with httpx.AsyncClient(headers={"Accept": "application/vnd.github.v3+json"}) as client:
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        # This tells GitHub who you are and grants you the higher rate limit.
+        "Authorization": f"Bearer {settings.GITHUB_ACCESS_TOKEN}"
+    }
+
+
+    async with httpx.AsyncClient(headers=headers) as client:
         try:
             tree = await _get_repo_tree_recursive(client, owner, repo)
 
@@ -136,18 +144,23 @@ async def get_repo_contents_from_url(github_url: str) -> Dict[str, str]:
                 # If the file passes all checks, fetch its content
                 content_url = item.get("url")
                 if content_url:
-                    # The Trees API returns another API URL, not a direct download URL.
-                    # We need to fetch this to get the content.
+                    # The client already has the auth headers, so this call is authenticated.
                     blob_response = await client.get(content_url)
                     if blob_response.status_code == 200:
                         blob_data = blob_response.json()
                         if blob_data.get("encoding") == "base64":
-                            # Decode the base64 content
                             file_content = base64.b64decode(blob_data["content"]).decode('utf-8', 'ignore')
                             repo_files_with_content[path] = file_content
 
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
+            if e.response.status_code == 403:
+                # print(f"x-ratelimit-reset status: {e.response.headers.get("x-ratelimit-reset")}")
+
+                # The message will now likely be about a bad token instead of a rate limit
+                print(
+                    f"GitHub API 403 Forbidden. Check if your GITHUB_ACCESS_TOKEN is valid and has `public_repo` scope. Error: {e}")
+                raise Exception("Failed to authenticate with GitHub. Please check server configuration.")
+            elif e.response.status_code == 404:
                 raise ValueError(
                     f"Repository not found at '{github_url}'. Please check if the URL is correct and the repository is public.")
             else:
