@@ -1,6 +1,5 @@
 from motor.motor_asyncio import AsyncIOMotorClient
 from .config import settings
-from bson import ObjectId # Import ObjectId
 
 client = AsyncIOMotorClient(settings.MONGO_URI)
 db = client[settings.DB_NAME]
@@ -20,3 +19,12 @@ async def init_db():
     # ✅ 2. CREATE AN INDEX FOR THE ANALYSES COLLECTION
     # This will help quickly find all analyses belonging to a specific user.
     await analyses.create_index("user_id")
+
+
+    # TTL index for staged analyses.
+    # It will delete documents where 'user_id' is null after 24 hours.
+    await analyses.create_index(
+        "analysisDate",
+        expireAfterSeconds=24 * 60 * 60,  # 24 hours
+        partialFilterExpression={"user_id": None}
+    )

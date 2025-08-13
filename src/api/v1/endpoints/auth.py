@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Response, Cookie, HTTPException, Depends
 from datetime import timedelta
 
-from sourcely_backend.core.config import settings
-from sourcely_backend.core.db import users
-from sourcely_backend.schemas.auth import UserIn, UserOut
-from sourcely_backend.schemas.token import AccessTokenOnly
-from sourcely_backend.services.auth_service import hash_password, create_token, save_refresh_token, \
+from src.core.config import settings
+from src.core.db import users
+from src.schemas.auth import UserIn, UserOut
+from src.schemas.token import AccessTokenOnly
+from src.services.auth_service import hash_password, create_token, save_refresh_token, \
     authenticate_user, validate_refresh_token, revoke_refresh_token, get_current_user
 
 router = APIRouter()
@@ -37,8 +37,8 @@ async def register_and_login(data: UserIn, response: Response):
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=True,
-        samesite="strict",
+        secure=True,          # MUST be True for SameSite=None
+        samesite="none",      # The fix for cross-origin cookie sending
         max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
     )
 
@@ -60,8 +60,8 @@ async def login(data: UserIn, response: Response):
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=True,
-        samesite="strict",
+        secure=True,          # MUST be True for SameSite=None
+        samesite="none",      # The fix for cross-origin cookie sending
         max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
     )
 
@@ -88,8 +88,8 @@ async def refresh(response: Response, refresh_token: str = Cookie(None)):
         key="refresh_token",
         value=new_refresh,
         httponly=True,
-        secure=True,
-        samesite="strict",
+        secure=True,          # MUST be True for SameSite=None
+        samesite="none",      # The fix for cross-origin cookie sending
         max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
     )
 

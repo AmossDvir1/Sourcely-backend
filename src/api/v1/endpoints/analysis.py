@@ -8,6 +8,7 @@ from ....schemas.analysis import AnalyzeRequest, AIModel, AnalysisResponse, Anal
     RepoFilesResponse, RepoFilesRequest
 from ....services import github_service, analysis_service
 from ....services.auth_service import get_current_user
+from ....services.github_service import _parse_github_url
 
 router = APIRouter()
 
@@ -244,26 +245,34 @@ async def prepare_analysis(data: RepoFilesRequest, current_user: dict = Depends(
     file extensions for the user to select from on the frontend.
     """
     try:
-        print(f"Preparing analysis for {data.githubUrl}")
+        # ✅ 2. Parse the URL to get the owner and repo name first
+        owner_repo = _parse_github_url(data.githubUrl)
+        if not owner_repo:
+            raise ValueError("Invalid GitHub URL format. Could not parse owner and repository.")
+
+        owner, repo = owner_repo
+        repo_name = f"{owner}/{repo}"  # Create the clean name string
+
+        print(f"Preparing analysis for {repo_name}")
         repo_files = await github_service.get_repo_contents_from_url(data.githubUrl)
 
         if not repo_files:
-            return {"extensions": []}
+            # ✅ 3. Return the repo name even if no files are found
+            return {"extensions": [], "repoName": repo_name}
 
         # Use a set to automatically handle uniqueness
         unique_extensions: Set[str] = set()
         for path in repo_files.keys():
-            # Find the extension for files that have one
             if '.' in path:
                 ext = '.' + path.split('.')[-1]
                 unique_extensions.add(ext)
-            # Handle files with no extension like 'Dockerfile'
             else:
                 filename = path.split('/')[-1]
                 if filename in github_service.SOURCE_CODE_EXTENSIONS:
                     unique_extensions.add(filename)
 
-        return {"extensions": sorted(list(unique_extensions))}
+        # ✅ 4. Include the repoName in the final response
+        return {"extensions": sorted(list(unique_extensions)), "repoName": repo_name}
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
