@@ -61,11 +61,8 @@ class AnalyzeRequest(BaseModel):
     contentTypes: Optional[List[str]] = None
 
 
-class AnalysisResponse(BaseModel):
-    analysis: str
-    sourceCode: str
-    tempId: str # This is crucial for redirecting the user
-
+class StagedAnalysisResponse(BaseModel):
+    tempId: str
 
 class RepoFilesRequest(BaseModel):
     githubUrl: str

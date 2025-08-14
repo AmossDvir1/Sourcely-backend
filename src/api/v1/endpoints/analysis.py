@@ -1,13 +1,13 @@
 import os
 from fastapi import APIRouter, Depends, HTTPException, status
 from google import genai
-from typing import Set
+from typing import Set, Optional
 
 from ....core.config import settings
-from ....schemas.analysis import AnalyzeRequest, AIModel, AnalysisResponse, AnalysisCreate, AnalysisOut, \
+from ....schemas.analysis import AnalyzeRequest, AIModel, StagedAnalysisResponse, AnalysisCreate, AnalysisOut, \
     RepoFilesResponse, RepoFilesRequest
 from ....services import github_service, analysis_service
-from ....services.auth_service import get_current_user
+from ....services.auth_service import get_current_user, get_optional_current_user
 from ....services.github_service import _parse_github_url
 
 router = APIRouter()
@@ -38,7 +38,7 @@ def get_real_models() -> list[dict]:
 
 
 @router.get("/models", response_model=list[AIModel])
-async def get_available_models(current_user: dict = Depends(get_current_user)):
+async def get_available_models():
     """
     Returns a list of available AI models for analysis from the Google GenAI API.
     """
@@ -49,7 +49,6 @@ async def get_available_models(current_user: dict = Depends(get_current_user)):
         # If the Google API call fails for any reason (e.g., invalid key, network issue)
         print(f"Error fetching models from Google API: {e}")
         raise HTTPException(status_code=500, detail="Could not retrieve AI models from the provider.")
-
 
 
 PROMPT_SECTIONS = {
@@ -65,8 +64,8 @@ PROMPT_SECTIONS = {
 }
 
 
-@router.post("/analyze", response_model=AnalysisResponse)
-async def analyze(data: AnalyzeRequest, current_user: dict = Depends(get_current_user)):
+@router.post("/analyze", response_model=StagedAnalysisResponse)
+async def analyze(data: AnalyzeRequest, current_user: Optional[dict] = Depends(get_optional_current_user)):
     """
     Accepts a GitHub URL and a model ID, fetches the repository content,
     formats it, and sends it to the Google GenAI API for analysis.
@@ -82,7 +81,8 @@ async def analyze(data: AnalyzeRequest, current_user: dict = Depends(get_current
 
     # === Step 2: Fetch and prepare repository data using the service ===
     try:
-        print(f"User {current_user['email']} starting analysis of: {data.githubUrl}")
+        user_email = current_user['email'] if current_user else "Anonymous"
+        print(f"User {user_email} starting analysis of: {data.githubUrl}")
         # Call our new service to get all relevant files and their content.
         # The service will raise its own exceptions on failure.
         repo_files = await github_service.get_repo_contents_from_url(data.githubUrl)
@@ -152,7 +152,6 @@ async def analyze(data: AnalyzeRequest, current_user: dict = Depends(get_current
 
     print(analysis_instructions)
 
-
     formatted_content = ""
     for path, content in repo_files.items():
         formatted_content += f"--- FILE: {path} ---\n"
@@ -177,15 +176,22 @@ async def analyze(data: AnalyzeRequest, current_user: dict = Depends(get_current
     # === Step 3: Send the formatted content to the Google GenAI API ===
     try:
 
-
         print(f"Sending request to Google GenAI with model: {data.modelId}")
         # Generate the content based on the prompt.
         response = client.models.generate_content(
             model=data.modelId, contents=prompt
         )
+        user_id_str = str(current_user["_id"]) if current_user else None
+        staged_analysis = await analysis_service.stage_analysis(
+            repo_url=data.githubUrl,
+            model_used=data.modelId,
+            analysis_content=response.text,
+            source_code=formatted_content,
+            user_id=user_id_str
+        )
 
-        # Return the AI's generated text in the correct response format.
-        return {"analysis": response.text, "sourceCode": formatted_content}
+        return {"tempId": str(staged_analysis["_id"])}
+
 
     except Exception as e:
         # Handle errors from the Google API (e.g., API key issue, content filtering).
@@ -207,7 +213,7 @@ async def save_analysis(
         print(f"User {current_user['email']} is saving an analysis named '{analysis_data.name}'.")
 
         # Call the new service function to handle the database logic
-        saved_analysis = await analysis_service.create_analysis(
+        saved_analysis = await analysis_service.claim_and_save_analysis(
             analysis_data=analysis_data,
             user_id=user_id
         )
@@ -218,28 +224,26 @@ async def save_analysis(
         raise HTTPException(status_code=500, detail="Could not save the analysis due to an internal error.")
 
 
-@router.get("/analyses", response_model=list[AnalysisOut])
-async def get_user_analyses(current_user: dict = Depends(get_current_user)):
+# NEW: Public endpoint to fetch an analysis by its ID
+@router.get("/analyses/{analysis_id}", response_model=AnalysisOut)
+async def get_analysis(analysis_id: str):
     """
-    Retrieves all saved analyses for the authenticated user.
+    Retrieves a single analysis by its ID. Can be a staged or saved analysis.
+    This endpoint is public to allow anonymous users to view a result
+    before deciding to sign up and save it.
     """
     try:
-        user_id = str(current_user["_id"])
-
-        # Call the service function to fetch the data
-        user_analyses = await analysis_service.get_analyses_by_user(user_id)
-
-        # FastAPI will automatically serialize the list of dictionaries
-        # into a JSON array of AnalysisOut objects.
-        return user_analyses
-
+        analysis = await analysis_service.get_analysis_by_id(analysis_id)
+        return analysis
+    except HTTPException as e:
+        raise e
     except Exception as e:
-        print(f"Error fetching analyses for user {current_user['email']}: {e}")
-        raise HTTPException(status_code=500, detail="Could not retrieve your analyses due to an internal error.")
+        print(f"Error fetching analysis {analysis_id}: {e}")
+        raise HTTPException(status_code=500, detail="Could not retrieve the analysis.")
 
 
 @router.post("/prepare-analysis", response_model=RepoFilesResponse)
-async def prepare_analysis(data: RepoFilesRequest, current_user: dict = Depends(get_current_user)):
+async def prepare_analysis(data: RepoFilesRequest):
     """
     Fetches the file tree of a repository and returns a unique list of
     file extensions for the user to select from on the frontend.

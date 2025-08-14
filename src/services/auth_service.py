@@ -1,7 +1,9 @@
 from datetime import datetime, timedelta, timezone
+from typing import Optional
+
 from passlib.context import CryptContext
 from jose import jwt, JWTError
-from fastapi import HTTPException, Depends
+from fastapi import HTTPException, Depends, Header
 from fastapi.security import OAuth2PasswordBearer
 from bson import ObjectId
 from ..core.config import settings
@@ -68,3 +70,37 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         return user
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid authentication credentials")
+
+
+# Dependency for optional authentication
+async def get_optional_current_user(authorization: Optional[str] = Header(None)) -> Optional[dict]:
+    """
+    Dependency to optionally get a user from an 'Authorization: Bearer <token>' header.
+    Does not raise an error if the header is missing or the token is invalid.
+    Returns the user document or None.
+    """
+    if not authorization:
+        return None  # No header provided
+
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            return None # Invalid scheme
+    except ValueError:
+        return None # Header is not in 'Bearer <token>' format
+
+    try:
+        payload = jwt.decode(token, SECRET, algorithms=["HS256"])
+        if payload.get("type") != "access":
+            return None  # Not an access token
+
+        user_id = payload.get("sub")
+        if not user_id:
+            return None  # Invalid payload
+
+        user = await users.find_one({"_id": ObjectId(user_id)})
+        # This will return the user if found, or None if not found in DB
+        return user
+    except (JWTError, HTTPException, ValueError, Exception):
+        # If any error occurs during decoding or validation, it's not a valid session.
+        return None
