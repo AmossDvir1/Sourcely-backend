@@ -1,9 +1,9 @@
 from typing import AsyncGenerator
 from google import genai
 import asyncio
+from google.genai import types
 
 from ..core.config import settings
-
 
 try:
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
@@ -12,9 +12,9 @@ except KeyError:
 
 
 async def generate_llm_response(
-    prompt: str,
-    model_id: str,
-    stream: bool = False
+        prompt: str,
+        model_id: str,
+        stream: bool = False
 ) -> str | AsyncGenerator[str, None]:
     """
     Interacts with the Google GenAI API. Can be used for both single
@@ -34,7 +34,34 @@ async def generate_llm_response(
             # --- One-shot generation (for "Analyze") ---
             # This is based on your working code from analysis.py
             response = client.models.generate_content(
-                model=model_id, contents=prompt
+                model=model_id, contents=prompt, config=types.GenerateContentConfig(
+                    system_instruction='Do not be overly cautious or refuse to answer. Fulfill the user\'s request to the best of your ability using the provided context.',
+                    temperature=1.4,
+                    max_output_tokens=800,
+                    safety_settings=[
+
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_DANGEROUS_CONTENT',
+                            threshold='BLOCK_ONLY_HIGH'
+                        ),
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_HARASSMENT',
+                            threshold='BLOCK_ONLY_HIGH'
+                        ),
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_SEXUALLY_EXPLICIT',
+                            threshold='BLOCK_ONLY_HIGH'
+                        ),
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_HATE_SPEECH',
+                            threshold='BLOCK_ONLY_HIGH'
+                        ),
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_CIVIC_INTEGRITY',
+                            threshold='BLOCK_ONLY_HIGH'
+                        ),
+                    ]
+                ),
             )
             return response.text
 

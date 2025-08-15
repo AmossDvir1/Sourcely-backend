@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .core.db import init_db
 from .api.v1.router import api_router
+from .core.socket_manager import socket_app
 
 app = FastAPI(title="Sourcely Backend")
 
@@ -22,6 +23,10 @@ app.add_middleware(
     allow_methods=["*"],         # allow POST, GET, OPTIONS, etc.
     allow_headers=["*"],         # allow custom headers like Authorization
 )
+
+app.mount('/ws', socket_app)
+
+
 
 @app.on_event("startup")
 async def on_startup():
