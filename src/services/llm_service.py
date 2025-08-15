@@ -2,7 +2,8 @@ from typing import AsyncGenerator
 from google import genai
 import asyncio
 
-from core.config import settings
+from ..core.config import settings
+
 
 try:
     client = genai.Client(api_key=settings.GEMINI_API_KEY)

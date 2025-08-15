@@ -3,7 +3,6 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 import asyncio
 import uuid
-import os
 from datetime import datetime, timezone
 
 from ....schemas.analysis import RepoFilesRequest

@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import Set, Optional
 
-from services import llm_service
-from services.llm_service import get_real_models
+from ....services.llm_service import get_real_models
+from ....services import llm_service
+
 from ....schemas.analysis import AnalyzeRequest, AIModel, StagedAnalysisResponse, AnalysisCreate, AnalysisOut, \
     RepoFilesResponse, RepoFilesRequest
 from ....services import github_service, analysis_service
