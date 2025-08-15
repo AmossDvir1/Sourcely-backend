@@ -1,4 +1,12 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
+import os
+from dotenv import load_dotenv
+
+load_dotenv(".env")
+
+# Then override with local values (if exists)
+load_dotenv(".env.local", override=True)
+
+from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     """
@@ -20,15 +28,7 @@ class Settings(BaseSettings):
 
     # Google Gemini API Settings
     GEMINI_API_KEY: str
-
-
     GITHUB_ACCESS_TOKEN: str
-
-    # This tells Pydantic to load the variables from a file named ".env"
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8"
-    )
 
 # Create a single, importable instance of the settings.
 # The rest of your application will import this `settings` object.

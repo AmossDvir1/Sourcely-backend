@@ -1,5 +1,6 @@
 from motor.motor_asyncio import AsyncIOMotorClient
 from .config import settings
+from datetime import datetime, timezone
 
 client = AsyncIOMotorClient(settings.MONGO_URI)
 db = client[settings.DB_NAME]
@@ -8,6 +9,9 @@ users = db.get_collection("users")
 tokens = db.get_collection("refresh_tokens")
 # ✅ 1. DEFINE THE NEW COLLECTION
 analyses = db.get_collection("analyses")
+chat_chunks = db.get_collection("chat_chunks")
+chat_sessions = db.get_collection("chat_sessions")
+
 
 async def init_db():
     await users.create_index("email", unique=True)
@@ -28,3 +32,5 @@ async def init_db():
         expireAfterSeconds=24 * 60 * 60,  # 24 hours
         partialFilterExpression={"user_id": None}
     )
+
+    await chat_sessions.create_index("createdAt", expireAfterSeconds=24 * 60 * 60)

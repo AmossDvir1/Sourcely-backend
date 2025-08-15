@@ -4,6 +4,8 @@
 # =============================================================================
 /.env
 /.env.*
+/.env.local
+.env.local
 # Keep a template file in git to show other developers what variables are needed.
 !/.env.example
 

@@ -1,9 +1,8 @@
-import os
 from fastapi import APIRouter, Depends, HTTPException, status
-from google import genai
 from typing import Set, Optional
 
-from ....core.config import settings
+from services import llm_service
+from services.llm_service import get_real_models
 from ....schemas.analysis import AnalyzeRequest, AIModel, StagedAnalysisResponse, AnalysisCreate, AnalysisOut, \
     RepoFilesResponse, RepoFilesRequest
 from ....services import github_service, analysis_service
@@ -12,29 +11,8 @@ from ....services.github_service import _parse_github_url
 
 router = APIRouter()
 
-try:
-    client = genai.Client(api_key=settings.GEMINI_API_KEY)
-except KeyError:
-    # This provides a clear error if the .env file is not set up correctly
-    raise RuntimeError("GEMINI_API_KEY not found in environment variables.") from None
 
 
-def get_real_models() -> list[dict]:
-    """
-    Fetches models from the Google GenAI API and filters for those
-    that can be used for generative content analysis.
-    """
-    real_models = []
-    for model in client.models.list():
-        # print(model, "\n")
-        # We only want models that can actually generate content for our analysis
-        if 'generateContent' in model.supported_actions:
-            real_models.append({
-                "id": model.name or "No id available.",  # e.g., "models/gemini-1.5-pro-latest"
-                "name": model.display_name or "No name available.",  # e.g., "Gemini 1.5 Pro"
-                "description": model.description or "No description available."
-            })
-    return real_models
 
 
 @router.get("/models", response_model=list[AIModel])
@@ -178,20 +156,22 @@ async def analyze(data: AnalyzeRequest, current_user: Optional[dict] = Depends(g
 
         print(f"Sending request to Google GenAI with model: {data.modelId}")
         # Generate the content based on the prompt.
-        response = client.models.generate_content(
-            model=data.modelId, contents=prompt
+        response_text = await llm_service.generate_llm_response(
+            prompt=prompt,
+            model_id=data.modelId,
+            stream=False  # We want the full response for analysis
         )
+
         user_id_str = str(current_user["_id"]) if current_user else None
         staged_analysis = await analysis_service.stage_analysis(
             repo_url=data.githubUrl,
             model_used=data.modelId,
-            analysis_content=response.text,
+            analysis_content=response_text,  # Use the result from our service
             source_code=formatted_content,
             user_id=user_id_str
         )
 
         return {"tempId": str(staged_analysis["_id"])}
-
 
     except Exception as e:
         # Handle errors from the Google API (e.g., API key issue, content filtering).
