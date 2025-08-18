@@ -8,8 +8,11 @@ from typing import List, Optional
 # It will be the body of your POST request. This is correct as is.
 class AnalysisCreate(BaseModel):
     name: str
+    repository: str
+    modelUsed: str
+    analysisContent: str
     description: Optional[str] = None
-    tempId: str  # The unique ID of the staged analysis to be claimed.
+    tempId: Optional[str] = None
     # Note: We no longer pass repository, modelUsed, or analysisContent here.
     # The backend will use the tempId to find the existing staged record.
 
@@ -59,6 +62,7 @@ class AnalyzeRequest(BaseModel):
     modelId: str
     includedExtensions: Optional[List[str]] = None
     contentTypes: Optional[List[str]] = None
+    codebase: str
 
 
 class StagedAnalysisResponse(BaseModel):
@@ -71,3 +75,4 @@ class RepoFilesRequest(BaseModel):
 class RepoFilesResponse(BaseModel):
     extensions: List[str]
     repoName: str
+    codebase: str

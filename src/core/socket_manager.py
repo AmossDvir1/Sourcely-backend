@@ -67,18 +67,34 @@ async def message(sid, data):
 
         question_embedding = embeddings.embed_query(question)
         pipeline = [
-            {"$vectorSearch": {
-                "index": "vector_index", "path": "embedding",
-                "queryVector": question_embedding, "numCandidates": 100, "limit": 15,
-                "filter": {"sessionId": session_id}
-            }}
+            {
+                "$vectorSearch": {
+                    "index": "vector_index",
+                    "path": "embedding",
+                    "queryVector": question_embedding,
+                    "numCandidates": 100,
+                    "limit": 15,
+                    "filter": {"sessionId": session_id}
+                }
+            },
+            {
+                # FIX: Use a pure inclusion projection.
+                # By only asking for 'text' and 'filePath', we implicitly
+                # exclude the large 'embedding' vector.
+                "$project": {
+                    "_id": 0,  # It's always okay to exclude _id.
+                    "text": 1,  # Include the text content.
+                    "filePath": 1  # Include the file path metadata.
+                }
+            }
         ]
         results = await chat_chunks.aggregate(pipeline).to_list(length=None)
         code_context = "\n\n".join([f"--- From file: {doc.get('filePath', 'Unknown File')} ---\n{doc.get('text', '')}" for doc in results])
 
+
         # --- STEP 2: BUILD THE ENHANCED, MULTI-CONTEXT PROMPT ---
         prompt = f"""
-        You are an expert code assistant. Answer the user's question accurately and consistently, using the provided context. Do not mention that you are using a summary or code snippets.
+        You are an expert code assistant. Address and answer the user's question accurately and consistently, using the provided context.
 
         You have three sources of information:
         1. **Repository Summary:** A high-level overview.
@@ -96,12 +112,14 @@ async def message(sid, data):
         --- END OF CODE SNIPPETS ---
 
         Answer the user's latest question: {question}
+        Answer it (or do what the user asks).
         """
+        print("--------------", code_context, repository_summary, formatted_history, sep="----------------------")
 
         # --- STEP 3: GENERATE & STREAM RESPONSE ---
         full_response_text = ""
         response_stream = await llm_service.generate_llm_response(
-            prompt=prompt, model_id='gemini-2.0-flash-lite', stream=True
+            prompt=prompt, model_id='gemini-2.5-flash', stream=True
         )
         async for chunk in response_stream:
             full_response_text += chunk
