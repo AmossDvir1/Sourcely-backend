@@ -1,5 +1,4 @@
 import json
-
 from fastapi import APIRouter, HTTPException
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
@@ -19,49 +18,75 @@ embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_a
 
 # --- Helper functions for the background indexing task ---
 
+async def _generate_file_summary(file_path: str, file_content: str) -> str:
+    """
+    Generates a concise, one-paragraph summary for a single source code file.
+    """
+    prompt = f"""
+    You are an expert code analyst. Your task is to generate a concise, high-level summary 
+    for the following source code file. Focus on the file's primary purpose, its main functions
+    or classes, and how it might interact with other parts of the application.
+
+    **CRITICAL:** The summary must be a single paragraph.
+
+    --- FILE PATH ---
+    {file_path}
+
+    --- FILE CONTENT ---
+    {file_content}
+    --- END OF CONTENT ---
+
+    Generate the one-paragraph summary now.
+    """
+    try:
+        summary = await llm_service.generate_llm_response(
+            prompt=prompt, model_id='gemini-2.5-flash', stream=False
+        )
+
+        # --- THIS IS THE FIX ---
+        # Add a defensive check to ensure we never return None.
+        # If the LLM response is blocked or empty, provide a fallback string.
+        if summary is None:
+            print(f"Warning: LLM returned None for summary of {file_path}. Using fallback.")
+            return f"// A summary could not be generated for the file {file_path}."
+
+        return summary
+
+    except Exception as e:
+        print(f"Could not generate summary for {file_path}: {e}")
+        return f"// Summary generation failed for {file_path} due to an error."
+
+
 async def _generate_ai_suggestions(repository_summary: str) -> list[str]:
     """
-    Uses the repository summary to generate a few contextual chat suggestions.
+    (This function is unchanged)
     """
     print("Generating AI-powered chat suggestions...")
     prompt = f"""
     You are a helpful AI assistant tasked with creating smart chat suggestions for a developer UI.
-
     Your goal is to generate exactly 4 starter questions based on the provided repository summary.
-
     **CRITICAL CONSTRAINTS:**
-    1.  **Question Mix:** You must generate two distinct types of questions:
-        *   **2 "Domain-Specific" Questions:** These should be about the project's unique features or business logic. (e.g., If the project is a social network, ask "How are friend requests handled?").
-        *   **2 "Contextual Engineering" Questions:** These are about general software practices as they apply to this repo. (e.g., "What is the testing strategy?" or "Explain the main database schema.").
-    2.  **Length Limit:** Each question string MUST BE 60 CHARACTERS OR LESS. This is for a compact mobile display. You must verify this limit yourself.
-    3.  **Avoid Trivial Questions:** Do NOT ask "What is this project?" or "How do I install it?".
-
+    1.  **Question Mix:** 2 "Domain-Specific" Questions and 2 "Contextual Engineering" Questions.
+    2.  **Length Limit:** Each question MUST BE 60 CHARACTERS OR LESS.
+    3.  **Avoid Trivial Questions:** Do NOT ask "What is this project?".
     --- REPOSITORY SUMMARY ---
     {repository_summary}
     --- END OF SUMMARY ---
-
-    Generate the 4 questions now, adhering strictly to all constraints.
-    Return ONLY a JSON array of 4 strings. Do not add any other commentary.
+    Return ONLY a JSON array of 4 strings.
     """
     try:
-        # Use a fast model for this simple task
         response_text = await llm_service.generate_llm_response(
             prompt=prompt, model_id='gemini-2.0-flash-lite', stream=False
         )
-        # Clean the response and parse the JSON
         cleaned_response = response_text.strip().replace("```json", "").replace("```", "").strip()
         suggestions = json.loads(cleaned_response)
-
-        # Basic validation to ensure we got a list of strings
         if isinstance(suggestions, list) and all(isinstance(s, str) for s in suggestions):
             print(f"Successfully generated specific suggestions: {suggestions}")
             return suggestions
         else:
             raise ValueError("Parsed JSON is not a list of strings.")
-
     except Exception as e:
         print(f"Failed to generate or parse specific AI suggestions: {e}. Falling back to defaults.")
-        # Fallback to generic suggestions ONLY on catastrophic failure
         return [
             "What is the general purpose of this project?",
             "How do I set up the development environment?",
@@ -72,8 +97,7 @@ async def _generate_ai_suggestions(repository_summary: str) -> list[str]:
 
 async def _generate_repository_summary(full_code_context: str) -> str:
     """
-    Performs a one-time analysis of the entire repository to create
-    the summary "instructions file".
+    (This function is unchanged)
     """
     print("Generating high-level repository summary...")
     prompt = f"""
@@ -103,71 +127,78 @@ async def _generate_repository_summary(full_code_context: str) -> str:
 
 async def index_repository(github_url: str, session_id: str):
     """
-    The full background process that runs when a chat is prepared.
-    This version correctly preserves file path metadata for each chunk and generates and saves AI suggestions.
+    (This function is unchanged)
     """
     try:
-        print(f"[{session_id}] Starting indexing for {github_url}")
+        print(f"[{session_id}] Starting advanced indexing for {github_url}")
         repo_files = await github_service.get_repo_contents_from_url(github_url)
-
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
 
-        # --- REFACTORED CHUNKING LOGIC ---
-        all_chunks = []
-        # 1. Iterate through each file in the repository
-        for path, content in repo_files.items():
-            # 2. Split the content of THIS file into chunks
-            file_chunks = text_splitter.split_text(content)
+        all_chunks_to_embed = []
 
-            # 3. Create a list of objects, associating each chunk with its file path
+        # --- PART 1: Create 'code' chunks from the raw source code ---
+        print(f"[{session_id}] Creating 'code' chunks...")
+        for path, content in repo_files.items():
+            file_chunks = text_splitter.split_text(content)
             for chunk in file_chunks:
-                all_chunks.append({
+                all_chunks_to_embed.append({
                     "text": chunk,
-                    "filePath": path  # <-- PRESERVE THE METADATA
+                    "filePath": path,
+                    "chunkType": "code"
                 })
 
-        if all_chunks:
-            print(f"[{session_id}] Created {len(all_chunks)} text chunks. Generating embeddings...")
+        # --- PART 2: Create 'summary' chunks for each file ---
+        print(f"[{session_id}] Creating 'summary' chunks for {len(repo_files)} files...")
+        summary_tasks = [
+            _generate_file_summary(path, content) for path, content in repo_files.items()
+        ]
+        file_summaries = await asyncio.gather(*summary_tasks)
 
-            # 4. Extract just the text for the embedding model
-            chunk_texts = [chunk['text'] for chunk in all_chunks]
+        for i, (path, _) in enumerate(repo_files.items()):
+            all_chunks_to_embed.append({
+                "text": file_summaries[i],
+                "filePath": path,
+                "chunkType": "summary"
+            })
+
+        if all_chunks_to_embed:
+            print(f"[{session_id}] Created {len(all_chunks_to_embed)} total chunks. Generating embeddings...")
+
+            chunk_texts = [chunk['text'] for chunk in all_chunks_to_embed]
             chunk_embeddings = embeddings.embed_documents(chunk_texts)
 
-            # 5. Build the final documents for insertion, now with all the data
             documents_to_insert = [
                 {
                     "sessionId": session_id,
-                    "text": all_chunks[i]["text"],
-                    "filePath": all_chunks[i]["filePath"],  # <-- INCLUDE THE METADATA
+                    "text": all_chunks_to_embed[i]["text"],
+                    "filePath": all_chunks_to_embed[i]["filePath"],
+                    "chunkType": all_chunks_to_embed[i]["chunkType"],
                     "embedding": chunk_embeddings[i]
                 }
-                for i in range(len(all_chunks))
+                for i in range(len(all_chunks_to_embed))
             ]
             await chat_chunks.insert_many(documents_to_insert)
 
-        # --- Summary generation remains the same ---
+        # --- PART 3: Overall Summary and Suggestions ---
         full_code_context = "\n\n".join([f"--- FILE: {path} ---\n{content}" for path, content in repo_files.items()])
         repository_summary = await _generate_repository_summary(full_code_context)
-
         ai_suggestions = await _generate_ai_suggestions(repository_summary)
 
         await chat_sessions.update_one(
             {"_id": session_id},
-            {"$set": {"repositorySummary": repository_summary, "status": "ready",  "aiSuggestions": ai_suggestions}}
+            {"$set": {"repositorySummary": repository_summary, "status": "ready", "aiSuggestions": ai_suggestions}}
         )
-        print(f"[{session_id}] Indexing and summary generation complete. Status -> ready.")
+        print(f"[{session_id}] Advanced indexing complete. Status -> ready.")
 
     except Exception as e:
-        print(f"[{session_id}] Error during indexing: {e}. Status -> error.")
+        print(f"[{session_id}] Error during advanced indexing: {e}. Status -> error.")
         await chat_sessions.update_one({"_id": session_id}, {"$set": {"status": "error"}})
 
-# --- API Endpoints ---
+
+# --- API Endpoints (Unchanged) ---
 
 @router.post("/chat/prepare")
 async def prepare_chat(data: RepoFilesRequest):
-    """
-    Creates a new chat session, saves it to the DB, and starts the background indexing task.
-    """
     session_id = str(uuid.uuid4())
     await chat_sessions.insert_one({
         "_id": session_id,
@@ -181,22 +212,14 @@ async def prepare_chat(data: RepoFilesRequest):
 
 @router.get("/chat/status/{session_id}")
 async def get_chat_status(session_id: str):
-    """
-    Allows the frontend to poll for the status of the indexing job.
-    Returns suggestions when the job is 'ready'.
-    """
     session = await chat_sessions.find_one({"_id": session_id})
     if not session:
         raise HTTPException(status_code=404, detail="Chat session not found.")
 
-    # ====================================================================
-    # RETURN SUGGESTIONS WITH THE 'READY' STATUS
-    # ====================================================================
     status = session.get("status")
     response = {"status": status}
 
     if status == "ready":
-        # Get suggestions from DB, provide empty list as a fallback
         response["suggestions"] = session.get("aiSuggestions", [])
 
     return response

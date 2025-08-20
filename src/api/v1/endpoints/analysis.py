@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Response
-from typing import Set, Optional
+from typing import Set, Optional, List
 
 from ....services.llm_service import get_real_models
 from ....services import llm_service
@@ -11,9 +11,6 @@ from ....services.auth_service import get_current_user, get_optional_current_use
 from ....services.github_service import _parse_github_url
 
 router = APIRouter()
-
-
-
 
 
 @router.get("/models", response_model=list[AIModel])
@@ -170,6 +167,20 @@ async def get_analysis(analysis_id: str):
     except Exception as e:
         print(f"Error fetching analysis {analysis_id}: {e}")
         raise HTTPException(status_code=500, detail="Could not retrieve the analysis.")
+
+
+@router.get("/analyses", response_model=List[AnalysisOut])
+async def get_user_analyses(current_user: dict = Depends(get_current_user)):
+    """
+    Retrieves all analyses saved by the currently authenticated user.
+    """
+    try:
+        user_id = str(current_user["_id"])
+        user_analyses = await analysis_service.get_analyses_for_user(user_id)
+        return user_analyses
+    except Exception as e:
+        print(f"Error fetching analyses for user {current_user['email']}: {e}")
+        raise HTTPException(status_code=500, detail="Could not retrieve your saved analyses.")
 
 
 @router.post("/prepare-analysis", response_model=RepoFilesResponse)

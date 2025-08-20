@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Response, Cookie, HTTPException, Depends
 from datetime import timedelta
 
-from src.core.config import settings
-from src.core.db import users
-from src.schemas.auth import UserIn, UserOut
-from src.schemas.token import AccessTokenOnly
-from src.services.auth_service import hash_password, create_token, save_refresh_token, \
+from ....core.config import settings
+from ....core.db import users
+from ....schemas.auth import UserIn, UserOut, UserUpdate
+from ....schemas.token import AccessTokenOnly
+from ....services.auth_service import hash_password, create_token, save_refresh_token, \
     authenticate_user, validate_refresh_token, revoke_refresh_token, get_current_user
 
 router = APIRouter()
@@ -137,3 +137,32 @@ async def verify_token(current_user: dict = Depends(get_current_user)):
     dependency will automatically raise a 401 Unauthorized HTTPException.
     """
     return current_user
+
+
+@router.put("/users/me", response_model=UserOut)
+async def update_current_user(
+        user_data: UserUpdate,
+        current_user: dict = Depends(get_current_user)
+):
+    """
+    Updates the profile information for the currently authenticated user.
+    """
+    user_id = current_user["_id"]
+
+    update_data = {
+        "$set": {
+            "firstName": user_data.firstName,
+            "lastName": user_data.lastName
+        }
+    }
+
+    # Find the user by ID and update their document
+    await users.update_one({"_id": user_id}, update_data)
+
+    # Fetch the updated user document to return it
+    updated_user = await users.find_one({"_id": user_id})
+
+    if not updated_user:
+        raise HTTPException(status_code=404, detail="User not found after update")
+
+    return updated_user

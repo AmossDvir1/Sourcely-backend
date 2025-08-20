@@ -1,8 +1,9 @@
-from typing import Optional
-
+from typing import Optional, List
 from fastapi import HTTPException, status
-
 from datetime import datetime, timezone
+from bson import ObjectId
+from pymongo import DESCENDING
+
 from ..schemas.analysis import AnalysisCreate
 from ..core.db import analyses
 from bson import ObjectId
@@ -58,14 +59,14 @@ async def save_or_claim_analysis(analysis_data: AnalysisCreate, user_id: str) ->
 
 
 # Function to stage an analysis from an anonymous or authenticated user
-async def stage_analysis(repo_url: str, model_used: str, analysis_content: str,  user_id: Optional[str] = None) -> dict:
+async def stage_analysis(repo_url: str, model_used: str, analysis_content: str, user_id: Optional[str] = None) -> dict:
     """
     Saves a new analysis in a temporary "staged" state.
     It has no user_id, so the TTL index will apply.
     """
     analysis_doc = {
         "user_id": ObjectId(user_id) if user_id else None,
-        "name": "Staged Analysis", # Placeholder name
+        "name": "Staged Analysis",  # Placeholder name
         "description": None,
         "repository": repo_url,
         "modelUsed": model_used,
@@ -128,3 +129,27 @@ async def delete_analysis(analysis_id: str, user_id: str):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Analysis not found or you do not have permission to delete it."
         )
+
+
+async def get_analyses_for_user(user_id: str) -> List[dict]:
+    """
+    Retrieves all saved analyses for a specific user from the database,
+    sorted by the analysis date in descending order.
+    """
+    try:
+        # --- STEP 2: Convert the user_id string back to an ObjectId ---
+        user_object_id = ObjectId(user_id)
+
+        # --- STEP 3: Use the ObjectId in the query ---
+        cursor = analyses.find(
+            {"user_id": user_object_id}  # Use the converted ObjectId here
+        ).sort("analysisDate", DESCENDING)
+
+        user_analyses = [analysis async for analysis in cursor]
+
+        return user_analyses
+    except Exception as e:
+        # This will catch errors if the user_id string is not a valid ObjectId format
+        print(f"Error converting user_id or querying analyses: {e}")
+        # Re-raise the exception or handle it as needed
+        raise e

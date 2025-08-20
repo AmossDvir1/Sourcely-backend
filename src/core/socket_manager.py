@@ -66,57 +66,91 @@ async def message(sid, data):
         formatted_history = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in history])
 
         question_embedding = embeddings.embed_query(question)
-        pipeline = [
-            {
-                "$vectorSearch": {
+
+        # =======================================================================
+        # --- ADVANCED RAG - STEP 1: THE "MAP" SEARCH (Summaries Only) ---
+        # =======================================================================
+        print(f"[{session_id}] Step 1: Searching for relevant file summaries...")
+        pipeline_summaries = [
+            {"$vectorSearch": {
+                "index": "vector_index",
+                "path": "embedding",
+                "queryVector": question_embedding,
+                "numCandidates": 50,
+                "limit": 5,
+                # CRITICAL: Filter for only summary chunks
+                "filter": {"sessionId": session_id, "chunkType": "summary"}
+            }},
+            {"$project": {"_id": 0, "text": 1, "filePath": 1}}
+        ]
+        summary_results = await chat_chunks.aggregate(pipeline_summaries).to_list(length=None)
+
+        relevant_file_paths = list(set([doc['filePath'] for doc in summary_results]))
+        summary_context = "\n\n".join(
+            [f"--- Summary for {doc['filePath']} ---\n{doc['text']}" for doc in summary_results])
+
+        # =======================================================================
+        # --- ADVANCED RAG - STEP 2: THE "RETRIEVE" SEARCH (Code Only) ---
+        # =======================================================================
+        code_context = "No specific code snippets were found for the relevant files."
+        if relevant_file_paths:
+            print(f"[{session_id}] Step 2: Found {len(relevant_file_paths)} relevant files. Retrieving code chunks...")
+            pipeline_code_chunks = [
+                {"$vectorSearch": {
                     "index": "vector_index",
                     "path": "embedding",
                     "queryVector": question_embedding,
-                    "numCandidates": 100,
+                    "numCandidates": 150,
                     "limit": 15,
-                    "filter": {"sessionId": session_id}
-                }
-            },
-            {
-                # FIX: Use a pure inclusion projection.
-                # By only asking for 'text' and 'filePath', we implicitly
-                # exclude the large 'embedding' vector.
-                "$project": {
-                    "_id": 0,  # It's always okay to exclude _id.
-                    "text": 1,  # Include the text content.
-                    "filePath": 1  # Include the file path metadata.
-                }
-            }
-        ]
-        results = await chat_chunks.aggregate(pipeline).to_list(length=None)
-        code_context = "\n\n".join([f"--- From file: {doc.get('filePath', 'Unknown File')} ---\n{doc.get('text', '')}" for doc in results])
+                    # CRITICAL: Filter for code chunks ONLY from the relevant files
+                    "filter": {
+                        "sessionId": session_id,
+                        "chunkType": "code",
+                        "filePath": {"$in": relevant_file_paths}
+                    }
+                }},
+                {"$project": {"_id": 0, "text": 1, "filePath": 1}}
+            ]
+            code_chunk_results = await chat_chunks.aggregate(pipeline_code_chunks).to_list(length=None)
+            if code_chunk_results:
+                code_context = "\n\n".join(
+                    [f"--- From file: {doc.get('filePath', 'Unknown')} ---\n{doc.get('text', '')}" for doc in
+                     code_chunk_results])
+        else:
+            print(f"[{session_id}] Step 2: No relevant file summaries found. Skipping code retrieval.")
 
-
-        # --- STEP 2: BUILD THE ENHANCED, MULTI-CONTEXT PROMPT ---
+        # =======================================================================
+        # --- ADVANCED RAG - STEP 3: SYNTHESIZE WITH AN UPGRADED PROMPT ---
+        # =======================================================================
         prompt = f"""
-        You are an expert code assistant. Address and answer the user's question accurately and consistently, using the provided context.
+            You are an expert-level software architect and code assistant. Your task is to provide a comprehensive answer to the user's question using a multi-layered context.
 
-        You have three sources of information:
-        1. **Repository Summary:** A high-level overview.
-        2. **Conversation History:** The dialogue so far.
-        3. **Relevant Code Snippets:** Specific code related to the latest question.
+            You have the following information available:
+            1.  **Overall Repository Summary:** A high-level, bird's-eye view of the entire project.
+            2.  **Conversation History:** The dialogue so far.
+            3.  **Relevant File Summaries:** AI-generated summaries of the files most relevant to the user's question. This is your primary guide.
+            4.  **Relevant Code Snippets:** Detailed code chunks from those specific, relevant files.
 
-        --- REPOSITORY SUMMARY ---
-        {repository_summary}
-        --- END OF REPOSITORY SUMMARY ---
-        --- CONVERSATION HISTORY ---
-        {formatted_history if formatted_history else "This is the first message."}
-        --- END OF CONVERSATION HISTORY ---
-        --- RELEVANT CODE SNIPPETS ---
-        {code_context if code_context else "No specific code snippets were found."}
-        --- END OF CODE SNIPPETS ---
+            --- OVERALL REPOSITORY SUMMARY ---
+            {repository_summary}
+            --- END OF REPOSITORY SUMMARY ---
 
-        Answer the user's latest question: {question}
-        Answer it (or do what the user asks).
-        """
-        print("--------------", code_context, repository_summary, formatted_history, sep="----------------------")
+            --- CONVERSATION HISTORY ---
+            {formatted_history if formatted_history else "This is the first message."}
+            --- END OF CONVERSATION HISTORY ---
 
-        # --- STEP 3: GENERATE & STREAM RESPONSE ---
+            --- RELEVANT FILE SUMMARIES ("The Map") ---
+            {summary_context if summary_context else "No specific file summaries were found to be relevant."}
+            --- END OF RELEVANT FILE SUMMARIES ---
+
+            --- RELEVANT CODE SNIPPETS ("The Details") ---
+            {code_context}
+            --- END OF CODE SNIPPETS ---
+
+            Based on all the context above, provide a clear, accurate, and detailed answer to the user's latest question: "{question}"
+            """
+
+        # --- STEP 4: Generate & Stream Response (No change here) ---
         full_response_text = ""
         response_stream = await llm_service.generate_llm_response(
             prompt=prompt, model_id='gemini-2.5-flash', stream=True
@@ -125,7 +159,7 @@ async def message(sid, data):
             full_response_text += chunk
             await sio.emit('message', data=chunk, room=sid)
 
-        # --- STEP 4: UPDATE HISTORY IN DB ---
+        # --- STEP 5: Update History in DB (No change here) ---
         new_history_turn = [
             {"role": "user", "content": question},
             {"role": "model", "content": full_response_text}
