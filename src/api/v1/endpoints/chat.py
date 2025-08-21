@@ -125,47 +125,47 @@ async def _generate_repository_summary(full_code_context: str) -> str:
         return "Error: Could not generate a summary for this repository."
 
 
-async def index_repository(github_url: str, session_id: str):
+async def index_repository(github_url: str, session_id: str, agent_mode: str):
     """
     (This function is unchanged)
+    The full background process. Now runs conditionally based on agent_mode.
     """
     try:
-        print(f"[{session_id}] Starting advanced indexing for {github_url}")
+        print(f"[{session_id}] Starting indexing for {github_url} (Mode: {agent_mode})")
         repo_files = await github_service.get_repo_contents_from_url(github_url)
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
 
         all_chunks_to_embed = []
 
-        # --- PART 1: Create 'code' chunks from the raw source code ---
-        print(f"[{session_id}] Creating 'code' chunks...")
+        print(f"[{session_id}] Creating 'code' chunks for all modes...")
         for path, content in repo_files.items():
             file_chunks = text_splitter.split_text(content)
             for chunk in file_chunks:
                 all_chunks_to_embed.append({
-                    "text": chunk,
-                    "filePath": path,
-                    "chunkType": "code"
+                    "text": chunk, "filePath": path, "chunkType": "code"
                 })
 
-        # --- PART 2: Create 'summary' chunks for each file ---
-        print(f"[{session_id}] Creating 'summary' chunks for {len(repo_files)} files...")
-        summary_tasks = [
-            _generate_file_summary(path, content) for path, content in repo_files.items()
-        ]
-        file_summaries = await asyncio.gather(*summary_tasks)
+        # --- CONDITIONAL LOGIC FOR SMART AGENT ---
+        # Only generate and embed summaries if the user selected 'smart' mode.
+        if agent_mode == "smart":
+            print(f"[{session_id}] Smart Mode enabled: Creating 'summary' chunks for {len(repo_files)} files...")
+            summary_tasks = [
+                _generate_file_summary(path, content) for path, content in repo_files.items()
+            ]
+            file_summaries = await asyncio.gather(*summary_tasks)
 
-        for i, (path, _) in enumerate(repo_files.items()):
-            all_chunks_to_embed.append({
-                "text": file_summaries[i],
-                "filePath": path,
-                "chunkType": "summary"
-            })
+            for i, (path, _) in enumerate(repo_files.items()):
+                all_chunks_to_embed.append({
+                    "text": file_summaries[i], "filePath": path, "chunkType": "summary"
+                })
+        else:
+            print(f"[{session_id}] Fast Mode enabled: Skipping file summary generation.")
 
         if all_chunks_to_embed:
             print(f"[{session_id}] Created {len(all_chunks_to_embed)} total chunks. Generating embeddings...")
 
             chunk_texts = [chunk['text'] for chunk in all_chunks_to_embed]
-            chunk_embeddings = embeddings.embed_documents(chunk_texts)
+            chunk_embeddings = await asyncio.to_thread(embeddings.embed_documents, chunk_texts)
 
             documents_to_insert = [
                 {
@@ -179,7 +179,7 @@ async def index_repository(github_url: str, session_id: str):
             ]
             await chat_chunks.insert_many(documents_to_insert)
 
-        # --- PART 3: Overall Summary and Suggestions ---
+        # --- Overall Summary and Suggestions run for both modes ---
         full_code_context = "\n\n".join([f"--- FILE: {path} ---\n{content}" for path, content in repo_files.items()])
         repository_summary = await _generate_repository_summary(full_code_context)
         ai_suggestions = await _generate_ai_suggestions(repository_summary)
@@ -188,25 +188,34 @@ async def index_repository(github_url: str, session_id: str):
             {"_id": session_id},
             {"$set": {"repositorySummary": repository_summary, "status": "ready", "aiSuggestions": ai_suggestions}}
         )
-        print(f"[{session_id}] Advanced indexing complete. Status -> ready.")
+        print(f"[{session_id}] Indexing complete. Status -> ready.")
 
     except Exception as e:
-        print(f"[{session_id}] Error during advanced indexing: {e}. Status -> error.")
+        print(f"[{session_id}] Error during indexing: {e}. Status -> error.")
         await chat_sessions.update_one({"_id": session_id}, {"$set": {"status": "error"}})
 
 
-# --- API Endpoints (Unchanged) ---
+# --- API Endpoints ---
 
 @router.post("/chat/prepare")
 async def prepare_chat(data: RepoFilesRequest):
+    """
+    Creates a new chat session and starts the background indexing task,
+    passing the selected agentMode along.
+    """
     session_id = str(uuid.uuid4())
     await chat_sessions.insert_one({
         "_id": session_id,
         "status": "preparing",
         "createdAt": datetime.now(timezone.utc),
-        "history": []
+        "history": [],
+        # Store the mode for potential future reference/debugging
+        "agentMode": data.agentMode
     })
-    asyncio.create_task(index_repository(data.githubUrl, session_id))
+
+    # Pass the agentMode to the background task
+    asyncio.create_task(index_repository(data.githubUrl, session_id, data.agentMode))
+
     return {"chatSessionId": session_id}
 
 

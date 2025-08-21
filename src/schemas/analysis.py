@@ -70,6 +70,7 @@ class StagedAnalysisResponse(BaseModel):
 
 class RepoFilesRequest(BaseModel):
     githubUrl: str
+    agentMode: str = "fast"
 
 
 class RepoFilesResponse(BaseModel):

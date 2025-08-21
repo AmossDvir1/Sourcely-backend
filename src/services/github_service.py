@@ -154,7 +154,7 @@ async def get_repo_contents_from_url(github_url: str) -> Dict[str, str]:
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 403:
-                # print(f"x-ratelimit-reset status: {e.response.headers.get("x-ratelimit-reset")}")
+                print(f"x-ratelimit-reset status: {e.response.headers.get("x-ratelimit-reset")}")
 
                 # The message will now likely be about a bad token instead of a rate limit
                 print(
